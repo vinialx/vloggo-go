@@ -10,8 +10,8 @@ type Count struct {
 	Json int
 }
 
-type SMTP struct {
-	Server   string   `env:"SMTP_HOST"`
+type VLoggoSMTP struct {
+	Host   string   `env:"SMTP_HOST"`
 	Port     int      `env:"SMTP_PORT"`
 	Username string   `env:"SMTP_USERNAME"`
 	Password string   `env:"SMTP_PASSWORD"`
@@ -22,12 +22,12 @@ type SMTP struct {
 type VLoggo struct {
 	Client    string
 	Json      bool
-	Debug     bool
 	Notify    bool
 	Console   bool
 	Throttle  int
 	Filecount Count
 	Directory Paths
+	SMTP      VLoggoSMTP
 }
 
 type LogLevel string
