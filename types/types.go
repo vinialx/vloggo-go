@@ -19,7 +19,7 @@ type VLoggoSMTP struct {
 	To       []string `env:"SMTP_TO"`
 }
 
-type VLoggo struct {
+type VLoggoConfig struct {
 	Client    string
 	Json      bool
 	Notify    bool
