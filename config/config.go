@@ -14,6 +14,8 @@ import (
 	"github.com/joho/godotenv"
 )
 
+type Option func(*types.VLoggoConfig)
+
 func Date(t ...time.Time) string {
 	date := time.Now()
 	if len(t) > 0 {
@@ -42,7 +44,7 @@ func DefaultDirectory(client string) types.Paths {
 	return types.Paths{Txt: txtDir, Json: jsonDir}
 }
 
-func validateSMTP(config types.VLoggoSMTP) error {
+func ValidateSMTP(config types.VLoggoSMTP) error {
 	if config.Host == "" {
 		return fmt.Errorf("host is required")
 	}
@@ -122,7 +124,7 @@ func DefaultSMTP(client string) (bool, types.VLoggoSMTP) {
 		To:       strings.Split(os.Getenv("SMTP_TO"), ","),
 	}
 
-	err = validateSMTP(smtp)
+	err = ValidateSMTP(smtp)
 	if err != nil {
 		fmt.Printf("[VLoggo] > [%s] [%s] [ERROR] : error validating smtp config > %v",
 			client,
@@ -144,52 +146,58 @@ func DefaultSMTP(client string) (bool, types.VLoggoSMTP) {
 }
 
 func DefaultConfig() types.VLoggoConfig {
+	notify, smtp := DefaultSMTP("VLoggo")
+
 	return types.VLoggoConfig{
 		Client:    "VLoggo",
 		Json:      false,
-		Notify:    true,
+		Notify:    notify,
 		Console:   true,
 		Throttle:  30,
 		Filecount: types.Count{Txt: 31, Json: 31},
 		Directory: DefaultDirectory("VLoggo"),
+		SMTP:      smtp,
 	}
 }
 
-func NewConfig() types.VLoggoConfig {
-	return DefaultConfig()
+func WithClient(cfg types.VLoggoConfig, client string) Option {
+	return func(cfg *types.VLoggoConfig) {
+		cfg.Client = client
+	}
 }
 
-func WithClient(cfg types.VLoggoConfig, client string) types.VLoggoConfig {
-	cfg.Client = client
-	return cfg
+func WithJSON(cfg types.VLoggoConfig, enabled bool) Option {
+	return func(cfg *types.VLoggoConfig) {
+		cfg.Json = enabled
+	}
 }
 
-func WithJSON(cfg types.VLoggoConfig, enabled bool) types.VLoggoConfig {
-	cfg.Json = enabled
-	return cfg
+func WithConsole(cfg types.VLoggoConfig, enabled bool) Option {
+	return func(cfg *types.VLoggoConfig) {
+		cfg.Console = enabled
+	}
 }
 
-func WithConsole(cfg types.VLoggoConfig, enabled bool) types.VLoggoConfig {
-	cfg.Console = enabled
-	return cfg
+func WithThrottle(cfg types.VLoggoConfig, seconds int) Option {
+	return func(cfg *types.VLoggoConfig) {
+		cfg.Throttle = seconds
+	}
 }
 
-func WithThrottle(cfg types.VLoggoConfig, seconds int) types.VLoggoConfig {
-	cfg.Throttle = seconds
-	return cfg
+func WithFilecount(cfg types.VLoggoConfig, filecount types.Count) Option {
+	return func(cfg *types.VLoggoConfig) {
+		cfg.Filecount = filecount
+	}
 }
 
-func WithFilecount(cfg types.VLoggoConfig, txt, json int) types.VLoggoConfig {
-	cfg.Filecount = types.Count{Txt: txt, Json: json}
-	return cfg
+func WithDirectory(cfg types.VLoggoConfig, paths types.Paths) Option {
+	return func(cfg *types.VLoggoConfig) {
+		cfg.Directory = paths
+	}
 }
 
-func WithDirectory(cfg types.VLoggoConfig, txt, json string) types.VLoggoConfig {
-	cfg.Directory = types.Paths{Txt: txt, Json: json}
-	return cfg
-}
-
-func WithSMTP(cfg types.VLoggoConfig, smtp types.VLoggoSMTP) types.VLoggoConfig {
-	cfg.SMTP = smtp
-	return cfg
+func WithSMTP(cfg types.VLoggoConfig, smtp types.VLoggoSMTP) Option {
+	return func(cfg *types.VLoggoConfig) {
+		cfg.SMTP = smtp
+	}
 }
