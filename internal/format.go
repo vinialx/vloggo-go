@@ -11,21 +11,21 @@ import (
 	types "github.com/vinialx/vloggo-go/types"
 )
 
-type Formatter struct {
+type FormatService struct {
 	Client string
 }
 
-func NewFormatter(client string) *Formatter {
+func NewFormatService(client string) *FormatService {
 	if client == "" {
 		client = "VLoggo"
 	}
 
-	return &Formatter{
+	return &FormatService{
 		Client: client,
 	}
 }
 
-func (f *Formatter) Date(t ...time.Time) string {
+func (fs *FormatService) Date(t ...time.Time) string {
 	date := time.Now()
 	if len(t) > 0 {
 		date = t[0]
@@ -33,7 +33,7 @@ func (f *Formatter) Date(t ...time.Time) string {
 	return date.Format("02/01/2006 15:04:05")
 }
 
-func (f *Formatter) IsoDate(t ...time.Time) string {
+func (fs *FormatService) IsoDate(t ...time.Time) string {
 	date := time.Now()
 
 	if len(t) > 0 {
@@ -42,24 +42,24 @@ func (f *Formatter) IsoDate(t ...time.Time) string {
 	return date.UTC().Format(time.RFC3339)
 }
 
-func (f *Formatter) Filename() string {
+func (fs *FormatService) Filename() string {
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
 
 	return "log-" + dateStr + ".txt"
 }
 
-func (f *Formatter) JSONFilename() string {
+func (fs *FormatService) JSONFilename() string {
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
 	return fmt.Sprintf("log-%s.jsonl", dateStr)
 }
 
-func (f *Formatter) Line(entry types.LogEntry) string {
-	timestamp := f.Date()
+func (fs *FormatService) Line(entry types.LogEntry) string {
+	timestamp := fs.Date()
 
 	return fmt.Sprintf("[%s] [%s] [%s] [%d] [%s] : %s\n",
-		f.Client,
+		fs.Client,
 		timestamp,
 		entry.Level,
 		entry.Code,
@@ -68,22 +68,22 @@ func (f *Formatter) Line(entry types.LogEntry) string {
 	)
 }
 
-func (f *Formatter) JSONLine(entry types.LogEntry, pretty bool) string {
+func (fs *FormatService) JSONLine(entry types.LogEntry, pretty bool) string {
 	jsonEntry := struct {
 		Client    string `json:"client"`
 		Timestamp string `json:"timestamp"`
 		types.LogEntry
 	}{
-		Client:    f.Client,
-		Timestamp: f.IsoDate(),
+		Client:    fs.Client,
+		Timestamp: fs.IsoDate(),
 		LogEntry:  entry,
 	}
 
 	jsonBytes, err := json.Marshal(jsonEntry)
 	if err != nil {
 		return fmt.Sprintf("[VLoggo] > [%s] [%s] [ERROR] : failed to serialize log > %v",
-			f.Client,
-			f.Date(),
+			fs.Client,
+			fs.Date(),
 			err,
 		)
 	}
@@ -91,26 +91,26 @@ func (f *Formatter) JSONLine(entry types.LogEntry, pretty bool) string {
 	return string(jsonBytes) + "\n"
 }
 
-func (f *Formatter) Separator() string {
+func (fs *FormatService) Separator() string {
 	separator := "\n" + strings.Repeat("_", 50) + "\n\n"
-	timestamp := f.Date()
+	timestamp := fs.Date()
 
 	return fmt.Sprintf("%s[%s] [%s] [INIT] : VLoggo initialized successfully \n",
 		separator,
-		f.Client,
+		fs.Client,
 		timestamp,
 	)
 }
 
-func (f *Formatter) JSONSeparator() string {
+func (fs *FormatService) JSONSeparator() string {
 	initEntry := struct {
 		Client    string `json:"client"`
 		Timestamp string `json:"timestamp"`
 		Level     string `json:"level"`
 		Message   string `json:"message"`
 	}{
-		Client:    f.Client,
-		Timestamp: f.IsoDate(),
+		Client:    fs.Client,
+		Timestamp: fs.IsoDate(),
 		Level:     "INIT",
 		Message:   "VLoggo initialized successfully",
 	}
@@ -119,15 +119,15 @@ func (f *Formatter) JSONSeparator() string {
 	if err != nil {
 
 		return fmt.Sprintf("[VLoggo] > [%s] [%s] [ERROR] : failed to serialize init log > %v",
-			f.Client,
-			f.Date(),
+			fs.Client,
+			fs.Date(),
 			err,
 		)
 	}
 	return string(jsonBytes) + "\n"
 }
 
-func (f *Formatter) Caller(skip int) string {
+func (fs *FormatService) Caller(skip int) string {
 
 	_, file, line, ok := runtime.Caller(skip + 1)
 	if !ok {
