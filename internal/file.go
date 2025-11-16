@@ -14,6 +14,8 @@ import (
 	types "github.com/vinialx/vloggo-go/types"
 )
 
+// FileService manages log file operations
+// Handles file creation, writing, rotation, and cleanup based on retention policies
 type FileService struct {
 	cfg          types.VLoggoConfig
 	txtFilename  string
@@ -25,6 +27,8 @@ type FileService struct {
 	mu          sync.Mutex
 }
 
+// NewFileService creates a new FileService instance and initializes it automatically
+// Returns a FileService ready to write logs
 func NewFileService(cfg types.VLoggoConfig) *FileService {
 	fs := &FileService{
 		cfg:         cfg,
@@ -44,6 +48,7 @@ func NewFileService(cfg types.VLoggoConfig) *FileService {
 	return fs
 }
 
+// appendToFile appends content to a file, creating it if it doesn't exist
 func (fs *FileService) appendToFile(filename, content string) error {
 	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -56,6 +61,9 @@ func (fs *FileService) appendToFile(filename, content string) error {
 	return err
 }
 
+// Initialize initializes the file service by creating log directories and first log file
+// Sets up current day tracking for rotation purposes
+// This method is idempotent - calling it multiple times has no effect after first initialization
 func (fs *FileService) Initialize() error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -101,6 +109,8 @@ func (fs *FileService) Initialize() error {
 
 }
 
+// verify checks if log rotation is needed by checking if the day has changed
+// If rotation is needed, creates a new log file and triggers cleanup of old files
 func (fs *FileService) verify() error {
 	today := time.Now().Day()
 
@@ -153,13 +163,13 @@ func (fs *FileService) verify() error {
 	return nil
 }
 
+// rotate removes old log files that exceed the retention count
 func (fs *FileService) rotate() error {
-	// Rotaciona arquivos TXT
+
 	if err := fs.rotateTxt(); err != nil {
 		return err
 	}
 
-	// Rotaciona arquivos JSON se habilitado
 	if fs.cfg.Json {
 		if err := fs.rotateJson(); err != nil {
 			return err
@@ -168,6 +178,10 @@ func (fs *FileService) rotate() error {
 
 	return nil
 }
+
+// rotateTxt rotates .txt log files
+// Scans the log directory, sorts files by modification time (newest first),
+// and deletes the oldest files when count exceeds cfg.Filecount.Txt
 func (fs *FileService) rotateTxt() error {
 
 	txtDir := fs.cfg.Directory.Txt
@@ -217,6 +231,9 @@ func (fs *FileService) rotateTxt() error {
 	return nil
 }
 
+// rotateJson rotates .jsonl log files
+// Scans the log directory, sorts files by modification time (newest first),
+// and deletes the oldest files when count exceeds cfg.Filecount.Json
 func (fs *FileService) rotateJson() error {
 	jsonDir := fs.cfg.Directory.Json
 
@@ -265,6 +282,9 @@ func (fs *FileService) rotateJson() error {
 	return nil
 }
 
+// Write writes a log line to the current log file
+// Automatically verifies if rotation is needed before writing
+// If JSON is enabled and jsonLine is provided, writes to both txt and json files
 func (fs *FileService) Write(line string, jsonLine ...string) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
