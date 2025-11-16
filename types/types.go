@@ -11,7 +11,7 @@ type Count struct {
 }
 
 type VLoggoSMTP struct {
-	Host   string   `env:"SMTP_HOST"`
+	Host     string   `env:"SMTP_HOST"`
 	Port     int      `env:"SMTP_PORT"`
 	Username string   `env:"SMTP_USERNAME"`
 	Password string   `env:"SMTP_PASSWORD"`
@@ -42,7 +42,7 @@ const (
 
 type LogEntry struct {
 	Level   LogLevel `json:"level"`
-	Code    int      `json:"code"`
+	Code    string   `json:"code"`
 	Caller  string   `json:"caller"`
 	Message string   `json:"message"`
 }

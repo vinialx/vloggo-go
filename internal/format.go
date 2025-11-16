@@ -58,7 +58,7 @@ func (fs *FormatService) JSONFilename() string {
 func (fs *FormatService) Line(entry types.LogEntry) string {
 	timestamp := fs.Date()
 
-	return fmt.Sprintf("[%s] [%s] [%s] [%d] [%s] : %s\n",
+	return fmt.Sprintf("[%s] [%s] [%s] [%s] [%s] : %s\n",
 		fs.Client,
 		timestamp,
 		entry.Level,
@@ -68,7 +68,7 @@ func (fs *FormatService) Line(entry types.LogEntry) string {
 	)
 }
 
-func (fs *FormatService) JSONLine(entry types.LogEntry, pretty bool) string {
+func (fs *FormatService) JSONLine(entry types.LogEntry) string {
 	jsonEntry := struct {
 		Client    string `json:"client"`
 		Timestamp string `json:"timestamp"`
@@ -127,7 +127,7 @@ func (fs *FormatService) JSONSeparator() string {
 	return string(jsonBytes) + "\n"
 }
 
-func (fs *FormatService) Caller(skip int) string {
+func Caller(skip int) string {
 
 	_, file, line, ok := runtime.Caller(skip + 1)
 	if !ok {
