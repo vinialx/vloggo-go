@@ -1,3 +1,10 @@
+/*
+Package config provides helper functions and functional options
+for creating and customizing the VLoggoConfig struct.
+
+It handles default settings (like directories and SMTP),
+environment variable loading, and configuration validation.
+*/
 package config
 
 import (
@@ -14,8 +21,11 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Option defines the functional option type used to modify a VLoggoConfig struct.
 type Option func(*types.VLoggoConfig)
 
+// Date returns a formatted date string ("02/01/2006 15:04:05").
+// If no time.Time (t) is provided, it defaults to time.Now().
 func Date(t ...time.Time) string {
 	date := time.Now()
 	if len(t) > 0 {
@@ -24,6 +34,10 @@ func Date(t ...time.Time) string {
 	return date.Format("02/01/2006 15:04:05")
 }
 
+// DefaultDirectory returns a types.Paths struct containing default paths
+// for Txt and Json logs, based on the client name.
+// It attempts to use the user's home directory, falling back to a "C:\" path
+// if the home directory cannot be found.
 func DefaultDirectory(client string) types.Paths {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -44,6 +58,9 @@ func DefaultDirectory(client string) types.Paths {
 	return types.Paths{Txt: txtDir, Json: jsonDir}
 }
 
+// ValidateSMTP checks if a VLoggoSMTP configuration is valid.
+// It verifies required fields (Host, Port, Username, Password, From, To)
+// and checks the format of email addresses.
 func ValidateSMTP(config types.VLoggoSMTP) error {
 	if config.Host == "" {
 		return fmt.Errorf("host is required")
@@ -78,6 +95,10 @@ func ValidateSMTP(config types.VLoggoSMTP) error {
 
 }
 
+// DefaultSMTP attempts to load SMTP configuration from environment variables
+// (loading a .env file if present).
+// It returns a boolean indicating if the loaded configuration is valid (notify)
+// and the VLoggoSMTP struct itself.
 func DefaultSMTP(client string) (bool, types.VLoggoSMTP) {
 	err := godotenv.Load()
 	if err != nil {
@@ -145,6 +166,9 @@ func DefaultSMTP(client string) (bool, types.VLoggoSMTP) {
 	return true, smtp
 }
 
+// DefaultConfig creates and returns a VLoggoConfig struct populated with
+// default values. It calls DefaultSMTP and DefaultDirectory to set
+// the default SMTP and path settings.
 func DefaultConfig() types.VLoggoConfig {
 	notify, smtp := DefaultSMTP("VLoggo")
 
@@ -160,42 +184,56 @@ func DefaultConfig() types.VLoggoConfig {
 	}
 }
 
+// WithClient returns an Option function that sets the Client field
+// of a VLoggoConfig.
 func WithClient(cfg types.VLoggoConfig, client string) Option {
 	return func(cfg *types.VLoggoConfig) {
 		cfg.Client = client
 	}
 }
 
+// WithJSON returns an Option function that sets the Json (enabled) field
+// of a VLoggoConfig.
 func WithJSON(cfg types.VLoggoConfig, enabled bool) Option {
 	return func(cfg *types.VLoggoConfig) {
 		cfg.Json = enabled
 	}
 }
 
+// WithConsole returns an Option function that sets the Console (enabled) field
+// of a VLoggoConfig.
 func WithConsole(cfg types.VLoggoConfig, enabled bool) Option {
 	return func(cfg *types.VLoggoConfig) {
 		cfg.Console = enabled
 	}
 }
 
+// WithThrottle returns an Option function that sets the Throttle (seconds) field
+// of a VLoggoConfig.
 func WithThrottle(cfg types.VLoggoConfig, seconds int) Option {
 	return func(cfg *types.VLoggoConfig) {
 		cfg.Throttle = seconds
 	}
 }
 
+// WithFilecount returns an Option function that sets the Filecount (Txt/Json) field
+// of a VLoggoConfig.
 func WithFilecount(cfg types.VLoggoConfig, filecount types.Count) Option {
 	return func(cfg *types.VLoggoConfig) {
 		cfg.Filecount = filecount
 	}
 }
 
+// WithDirectory returns an Option function that sets the Directory (paths) field
+// of a VLoggoConfig.
 func WithDirectory(cfg types.VLoggoConfig, paths types.Paths) Option {
 	return func(cfg *types.VLoggoConfig) {
 		cfg.Directory = paths
 	}
 }
 
+// WithSMTP returns an Option function that sets the SMTP field
+// of a VLoggoConfig.
 func WithSMTP(cfg types.VLoggoConfig, smtp types.VLoggoSMTP) Option {
 	return func(cfg *types.VLoggoConfig) {
 		cfg.SMTP = smtp
