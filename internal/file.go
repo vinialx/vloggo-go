@@ -22,12 +22,22 @@ type FileService struct {
 }
 
 func NewFileService(cfg types.VLoggoConfig) *FileService {
-	return &FileService{
+	fs := &FileService{
 		cfg:         cfg,
 		format:      NewFormatService(cfg.Client),
 		currentDay:  0,
 		initialized: false,
 	}
+
+	if err := fs.Initialize(); err != nil {
+		fmt.Printf("[VLoggo] > [%s] [%s] [ERROR] : failed to initialize FileService > %v\n",
+			cfg.Client,
+			fs.format.Date(),
+			err,
+		)
+	}
+
+	return fs
 }
 
 func (fs *FileService) appendToFile(filename, content string) error {
@@ -53,7 +63,7 @@ func (fs *FileService) Initialize() error {
 	fs.currentDay = time.Now().Day()
 
 	txtDir := fs.cfg.Directory.Txt
-	if err := os.Mkdir(txtDir, 0755); err != nil {
+	if err := os.MkdirAll(txtDir, 0755); err != nil {
 		return fmt.Errorf("error creating txt directory > %s", err)
 	}
 
@@ -65,7 +75,7 @@ func (fs *FileService) Initialize() error {
 
 	if fs.cfg.Json {
 		jsonDir := fs.cfg.Directory.Json
-		if err := os.Mkdir(txtDir, 0755); err != nil {
+		if err := os.MkdirAll(txtDir, 0755); err != nil {
 			return fmt.Errorf("error creating json directory > %s", err)
 		}
 
