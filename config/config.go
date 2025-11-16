@@ -1,10 +1,7 @@
-/*
-Package config provides helper functions and functional options
-for creating and customizing the VLoggoConfig struct.
-
-It handles default settings (like directories and SMTP),
-environment variable loading, and configuration validation.
-*/
+// Package config provides helper functions and functional options
+// for creating and customizing the VLoggoConfig struct.
+// It handles default settings (like directories and SMTP),
+// environment variable loading, and configuration validation.
 package config
 
 import (
@@ -176,6 +173,7 @@ func DefaultConfig() types.VLoggoConfig {
 		Client:    "VLoggo",
 		Json:      false,
 		Notify:    notify,
+		Debug:     true,
 		Console:   true,
 		Throttle:  30,
 		Filecount: types.Count{Txt: 31, Json: 31},
@@ -197,6 +195,14 @@ func WithClient(cfg types.VLoggoConfig, client string) Option {
 func WithJSON(cfg types.VLoggoConfig, enabled bool) Option {
 	return func(cfg *types.VLoggoConfig) {
 		cfg.Json = enabled
+	}
+}
+
+// WithDebug returns an Option function that sets the Debug (enabled) field
+// of a VLoggoConfig.
+func WithDebug(cfg types.VLoggoConfig, enabled bool) Option {
+	return func(cfg *types.VLoggoConfig) {
+		cfg.Debug = enabled
 	}
 }
 

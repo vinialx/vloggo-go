@@ -23,6 +23,7 @@ type VLoggoConfig struct {
 	Client    string
 	Json      bool
 	Notify    bool
+	Debug     bool
 	Console   bool
 	Throttle  int
 	Filecount Count
