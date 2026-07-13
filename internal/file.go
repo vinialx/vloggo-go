@@ -1,6 +1,3 @@
-// Package services provides formatting and file management services for VLoggo.
-// Includes FormatService for log formatting and timestamps, and FileService for file operations,
-// log rotation and retention management.
 package services
 
 import (
@@ -8,14 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	types "github.com/vinialx/vloggo-go/types"
 )
 
-// FileService manages log file operations
-// Handles file creation, writing, rotation, and cleanup based on retention policies
 type FileService struct {
 	cfg          types.VLoggoConfig
 	txtFilename  string
@@ -27,14 +23,10 @@ type FileService struct {
 	mu          sync.Mutex
 }
 
-// NewFileService creates a new FileService instance and initializes it automatically
-// Returns a FileService ready to write logs
 func NewFileService(cfg types.VLoggoConfig) *FileService {
 	fs := &FileService{
-		cfg:         cfg,
-		format:      NewFormatService(cfg.Client),
-		currentDay:  0,
-		initialized: false,
+		cfg:    cfg,
+		format: NewFormatService(cfg.Client),
 	}
 
 	if err := fs.Initialize(); err != nil {
@@ -48,22 +40,17 @@ func NewFileService(cfg types.VLoggoConfig) *FileService {
 	return fs
 }
 
-// appendToFile appends content to a file, creating it if it doesn't exist
 func (fs *FileService) appendToFile(filename, content string) error {
 	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
-
 	defer f.Close()
 
 	_, err = f.WriteString(content)
 	return err
 }
 
-// Initialize initializes the file service by creating log directories and first log file
-// Sets up current day tracking for rotation purposes
-// This method is idempotent - calling it multiple times has no effect after first initialization
 func (fs *FileService) Initialize() error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -72,33 +59,36 @@ func (fs *FileService) Initialize() error {
 		return nil
 	}
 
+	return fs.initializeLocked()
+}
+
+func (fs *FileService) initializeLocked() error {
 	fs.currentDay = time.Now().Day()
 
-	txtDir := fs.cfg.Directory.Txt
-	if err := os.MkdirAll(txtDir, 0755); err != nil {
-		return fmt.Errorf("error creating txt directory > %s", err)
+	if err := os.MkdirAll(fs.cfg.Directory.Txt, 0755); err != nil {
+		return fmt.Errorf("error creating txt directory > %w", err)
 	}
 
-	fs.txtFilename = filepath.Join(txtDir, fs.format.Filename())
-
+	fs.txtFilename = filepath.Join(fs.cfg.Directory.Txt, fs.format.Filename())
 	if err := fs.appendToFile(fs.txtFilename, fs.format.Separator()); err != nil {
-		return fmt.Errorf("error writing txt separator: %w", err)
+		return fmt.Errorf("error writing txt separator > %w", err)
 	}
 
 	if fs.cfg.Json {
-		jsonDir := fs.cfg.Directory.Json
-		if err := os.MkdirAll(jsonDir, 0755); err != nil {
-			return fmt.Errorf("error creating json directory > %s", err)
+		if err := os.MkdirAll(fs.cfg.Directory.Json, 0755); err != nil {
+			return fmt.Errorf("error creating json directory > %w", err)
 		}
 
-		fs.jsonFilename = filepath.Join(jsonDir, fs.format.JSONFilename())
-
+		fs.jsonFilename = filepath.Join(fs.cfg.Directory.Json, fs.format.JSONFilename())
 		if err := fs.appendToFile(fs.jsonFilename, fs.format.JSONSeparator()); err != nil {
-			return fmt.Errorf("error writing json separator: %w", err)
+			return fmt.Errorf("error writing json separator > %w", err)
 		}
 	}
 
 	fs.initialized = true
+	if err := fs.rotateLocked(); err != nil {
+		return err
+	}
 
 	fmt.Printf("[VLoggo] > [%s] [%s] [INFO] : FileService initialized\n",
 		fs.cfg.Client,
@@ -106,17 +96,10 @@ func (fs *FileService) Initialize() error {
 	)
 
 	return nil
-
 }
 
-// verify checks if log rotation is needed by checking if the day has changed
-// If rotation is needed, creates a new log file and triggers cleanup of old files
-func (fs *FileService) verify() error {
+func (fs *FileService) verifyLocked() error {
 	today := time.Now().Day()
-
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
-
 	if today == fs.currentDay {
 		return nil
 	}
@@ -128,50 +111,38 @@ func (fs *FileService) verify() error {
 		)
 	}
 
-	fs.currentDay = time.Now().Day()
+	fs.currentDay = today
 
-	txtDir := fs.cfg.Directory.Txt
-	if err := os.MkdirAll(txtDir, 0755); err != nil {
-		return fmt.Errorf("error creating txt directory > %s", err)
+	if err := os.MkdirAll(fs.cfg.Directory.Txt, 0755); err != nil {
+		return fmt.Errorf("error creating txt directory > %w", err)
 	}
 
-	fs.txtFilename = filepath.Join(txtDir, fs.format.Filename())
-
+	fs.txtFilename = filepath.Join(fs.cfg.Directory.Txt, fs.format.Filename())
 	if err := fs.appendToFile(fs.txtFilename, fs.format.Separator()); err != nil {
 		return fmt.Errorf("error writing txt separator > %w", err)
 	}
 
 	if fs.cfg.Json {
-		jsonDir := fs.cfg.Directory.Json
-		if err := os.MkdirAll(jsonDir, 0755); err != nil {
-			return fmt.Errorf("error creating json directory > %s", err)
+		if err := os.MkdirAll(fs.cfg.Directory.Json, 0755); err != nil {
+			return fmt.Errorf("error creating json directory > %w", err)
 		}
 
-		fs.jsonFilename = filepath.Join(jsonDir, fs.format.JSONFilename())
-
+		fs.jsonFilename = filepath.Join(fs.cfg.Directory.Json, fs.format.JSONFilename())
 		if err := fs.appendToFile(fs.jsonFilename, fs.format.JSONSeparator()); err != nil {
 			return fmt.Errorf("error writing json separator > %w", err)
 		}
 	}
 
-	fs.initialized = true
-
-	if err := fs.rotate(); err != nil {
-		return fmt.Errorf("vloggo cleanup failed > %w", err)
-	}
-
-	return nil
+	return fs.rotateLocked()
 }
 
-// rotate removes old log files that exceed the retention count
-func (fs *FileService) rotate() error {
-
-	if err := fs.rotateTxt(); err != nil {
+func (fs *FileService) rotateLocked() error {
+	if err := fs.rotateDir(fs.cfg.Directory.Txt, ".txt", fs.cfg.Filecount.Txt); err != nil {
 		return err
 	}
 
 	if fs.cfg.Json {
-		if err := fs.rotateJson(); err != nil {
+		if err := fs.rotateDir(fs.cfg.Directory.Json, ".jsonl", fs.cfg.Filecount.Json); err != nil {
 			return err
 		}
 	}
@@ -179,112 +150,65 @@ func (fs *FileService) rotate() error {
 	return nil
 }
 
-// rotateTxt rotates .txt log files
-// Scans the log directory, sorts files by modification time (newest first),
-// and deletes the oldest files when count exceeds cfg.Filecount.Txt
-func (fs *FileService) rotateTxt() error {
+func (fs *FileService) rotateDir(dir, ext string, keep int) error {
+	if keep <= 0 {
+		return nil
+	}
 
-	txtDir := fs.cfg.Directory.Txt
-
-	files, err := os.ReadDir(txtDir)
+	files, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("error reading txt directory > %w", err)
+		return fmt.Errorf("error reading %s directory > %w", ext, err)
 	}
 
-	type fileInfo struct {
-		path  string
-		mtime time.Time
+	type logFile struct {
+		path string
+		date time.Time
 	}
 
-	var logFiles []fileInfo
+	logFiles := make([]logFile, 0, len(files))
 	for _, file := range files {
-		if filepath.Ext(file.Name()) == ".txt" {
-			filePath := filepath.Join(txtDir, file.Name())
-			info, err := file.Info()
-			if err != nil {
-				continue
-			}
-			logFiles = append(logFiles, fileInfo{
-				path:  filePath,
-				mtime: info.ModTime(),
-			})
+		if file.IsDir() || filepath.Ext(file.Name()) != ext {
+			continue
 		}
+
+		info, err := file.Info()
+		if err != nil {
+			continue
+		}
+
+		fileDate := info.ModTime()
+		datePart := strings.TrimSuffix(strings.TrimPrefix(file.Name(), "log-"), ext)
+		if parsed, err := time.Parse("2006-01-02", datePart); err == nil {
+			fileDate = parsed
+		}
+
+		logFiles = append(logFiles, logFile{
+			path: filepath.Join(dir, file.Name()),
+			date: fileDate,
+		})
 	}
 
 	sort.Slice(logFiles, func(i, j int) bool {
-		return logFiles[i].mtime.After(logFiles[j].mtime)
+		return logFiles[i].date.After(logFiles[j].date)
 	})
 
-	if len(logFiles) > fs.cfg.Filecount.Txt {
-		filesToDelete := logFiles[fs.cfg.Filecount.Txt:]
-		for _, file := range filesToDelete {
-			if err := os.Remove(file.path); err != nil {
-				fmt.Printf("[VLoggo] > [%s] [%s] [ERROR] : error deleting old txt file > %v\n",
-					fs.cfg.Client,
-					fs.format.Date(),
-					err,
-				)
-			}
+	if len(logFiles) <= keep {
+		return nil
+	}
+
+	for _, file := range logFiles[keep:] {
+		if err := os.Remove(file.path); err != nil {
+			fmt.Printf("[VLoggo] > [%s] [%s] [ERROR] : error deleting old log file > %v\n",
+				fs.cfg.Client,
+				fs.format.Date(),
+				err,
+			)
 		}
 	}
 
 	return nil
 }
 
-// rotateJson rotates .jsonl log files
-// Scans the log directory, sorts files by modification time (newest first),
-// and deletes the oldest files when count exceeds cfg.Filecount.Json
-func (fs *FileService) rotateJson() error {
-	jsonDir := fs.cfg.Directory.Json
-
-	files, err := os.ReadDir(jsonDir)
-	if err != nil {
-		return fmt.Errorf("error reading json directory: %w", err)
-	}
-
-	type fileInfo struct {
-		path  string
-		mtime time.Time
-	}
-
-	var logFiles []fileInfo
-	for _, file := range files {
-		if filepath.Ext(file.Name()) == ".jsonl" {
-			filePath := filepath.Join(jsonDir, file.Name())
-			info, err := file.Info()
-			if err != nil {
-				continue
-			}
-			logFiles = append(logFiles, fileInfo{
-				path:  filePath,
-				mtime: info.ModTime(),
-			})
-		}
-	}
-
-	sort.Slice(logFiles, func(i, j int) bool {
-		return logFiles[i].mtime.After(logFiles[j].mtime)
-	})
-
-	if len(logFiles) > fs.cfg.Filecount.Json {
-		filesToDelete := logFiles[fs.cfg.Filecount.Json:]
-		for _, file := range filesToDelete {
-			if err := os.Remove(file.path); err != nil {
-				fmt.Printf("[VLoggo] > [%s] [%s] [ERROR] : error deleting old json file > %v\n",
-					fs.cfg.Client,
-					fs.format.Date(),
-					err,
-				)
-			}
-		}
-	}
-
-	return nil
-}
-
-// Write writes a log line to the current log file
-// Automatically verifies if rotation is needed before writing
-// If JSON is enabled and jsonLine is provided, writes to both txt and json files
 func (fs *FileService) Write(line string, jsonLine ...string) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -293,12 +217,8 @@ func (fs *FileService) Write(line string, jsonLine ...string) error {
 		return fmt.Errorf("file service not initialized")
 	}
 
-	if err := fs.verify(); err != nil {
-		fmt.Printf("[VLoggo] > [%s] [%s] [ERROR] : > %v",
-			fs.cfg.Client,
-			fs.format.Date(),
-			err,
-		)
+	if err := fs.verifyLocked(); err != nil {
+		return err
 	}
 
 	if err := fs.appendToFile(fs.txtFilename, line); err != nil {

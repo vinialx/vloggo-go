@@ -16,6 +16,7 @@ type VLoggo struct {
 	cfg    types.VLoggoConfig
 	file   *services.FileService
 	format *services.FormatService
+	email  *services.EmailService
 }
 
 var (
@@ -24,39 +25,76 @@ var (
 )
 
 func NewInstance(client string, opts ...config.Option) *VLoggo {
-	mu.RLock()
-	if instance, exists := instances[client]; exists {
-		return instance
+	if client == "" {
+		client = config.DefaultClient
 	}
 
+	mu.RLock()
+	if instance, exists := instances[client]; exists {
+		mu.RUnlock()
+		return instance
+	}
 	mu.RUnlock()
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	if instance, exists := instances[client]; exists {
-		return instance
-	}
-
-	cfg := config.DefaultConfig()
-	cfg.Client = client
+	cfg := config.DefaultConfig(client)
 
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&cfg)
 		}
 	}
+	cfg = config.Normalize(cfg)
 
-	instance := &VLoggo{
-		cfg:    cfg,
-		file:   services.NewFileService(cfg),
-		format: services.NewFormatService(cfg.Client),
+	if instance, exists := instances[cfg.Client]; exists {
+		return instance
 	}
 
-	instances[client] = instance
+	instance := newVLoggo(cfg)
+
+	instances[cfg.Client] = instance
 
 	return instance
 
+}
+
+func NewInstanceFromConfig(cfg types.VLoggoConfig) *VLoggo {
+	cfg = config.Normalize(cfg)
+
+	mu.RLock()
+	if instance, exists := instances[cfg.Client]; exists {
+		mu.RUnlock()
+		return instance
+	}
+	mu.RUnlock()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if instance, exists := instances[cfg.Client]; exists {
+		return instance
+	}
+
+	instance := newVLoggo(cfg)
+	instances[cfg.Client] = instance
+
+	return instance
+}
+
+func NewInstanceFromInput(input types.VLoggoConfigInput) *VLoggo {
+	return NewInstanceFromConfig(config.FromInput(input))
+}
+
+func newVLoggo(cfg types.VLoggoConfig) *VLoggo {
+	cfg = config.Normalize(cfg)
+	return &VLoggo{
+		cfg:    cfg,
+		file:   services.NewFileService(cfg),
+		format: services.NewFormatService(cfg.Client),
+		email:  services.NewEmailService(cfg),
+	}
 }
 
 func GetAllInstances() map[string]*VLoggo {
@@ -135,21 +173,20 @@ func Clone(base, client string, opts ...config.Option) *VLoggo {
 			opt(&cloneCfg)
 		}
 	}
+	cloneCfg = config.Normalize(cloneCfg)
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	if existingInstance, exists := instances[client]; exists {
+	if existingInstance, exists := instances[cloneCfg.Client]; exists {
 		return existingInstance
 	}
 
-	newInstance := &VLoggo{
-		cfg: cloneCfg,
-	}
-	instances[client] = newInstance
+	newInstance := newVLoggo(cloneCfg)
+	instances[cloneCfg.Client] = newInstance
 
 	fmt.Printf("[VLoggo] > [%s] [%s] [INFO] : instance cloned from %s\n",
-		client,
+		cloneCfg.Client,
 		config.Date(),
 		base,
 	)
@@ -166,9 +203,25 @@ func (v *VLoggo) Update(opts ...config.Option) {
 			opt(&v.cfg)
 		}
 	}
+
+	v.cfg = config.Normalize(v.cfg)
+	v.file = services.NewFileService(v.cfg)
+	v.format = services.NewFormatService(v.cfg.Client)
+	v.email = services.NewEmailService(v.cfg)
 }
 
 func (v *VLoggo) log(level types.LogLevel, code, message string) {
+	v.mu.Lock()
+
+	if level == types.Debug && !v.cfg.Debug {
+		v.mu.Unlock()
+		return
+	}
+
+	if v.file == nil || v.format == nil {
+		v.mu.Unlock()
+		return
+	}
 
 	entry := types.LogEntry{
 		Level:   level,
@@ -178,6 +231,9 @@ func (v *VLoggo) log(level types.LogLevel, code, message string) {
 	}
 
 	line := v.format.Line(entry)
+	if v.cfg.Console {
+		fmt.Print(line)
+	}
 
 	if v.cfg.Json {
 		jsonLine := v.format.JSONLine(entry)
@@ -199,26 +255,42 @@ func (v *VLoggo) log(level types.LogLevel, code, message string) {
 		}
 	}
 
+	var email *services.EmailService
+	client := v.cfg.Client
+	if level == types.Fatal && v.cfg.Notify {
+		email = v.email
+	}
+	v.mu.Unlock()
+
+	if email != nil {
+		if err := email.NotifyFatal(entry); err != nil {
+			fmt.Printf("[VLoggo] > [%s] [%s] [INFO] : failed to send fatal notification > %s\n",
+				client,
+				config.Date(),
+				err,
+			)
+		}
+	}
 }
 
 func (v *VLoggo) Info(code, message string) {
-	v.log("INFO", code, message)
+	v.log(types.Info, code, message)
 }
 
 func (v *VLoggo) Warn(code, message string) {
-	v.log("WARN", code, message)
+	v.log(types.Warn, code, message)
 }
 
 func (v *VLoggo) Debug(code, message string) {
-	v.log("DEBUG", code, message)
+	v.log(types.Debug, code, message)
 }
 
 func (v *VLoggo) Error(code, message string) {
-	v.log("ERROR", code, message)
+	v.log(types.Error, code, message)
 }
 
 func (v *VLoggo) Fatal(code, message string) {
-	v.log("FATAL", code, message)
+	v.log(types.Fatal, code, message)
 
 	os.Exit(1)
 }
