@@ -1,157 +1,237 @@
-// Package services provides formatting and file management services for VLoggo.
-// Includes FormatService for log formatting and timestamps, and FileService for file operations,
-// log rotation and retention management.
+// Package services provides formatting, redaction, file, and SMTP services for VLoggo.
 package services
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	types "github.com/vinialx/vloggo-go/types"
+	"github.com/vinialx/vloggo-go/v2/types"
 )
 
-// FormatService manages log entry formatting, filenames and timestamps
 type FormatService struct {
-	Client string
+	Client   string
+	Timezone string
+	Location *time.Location
 }
 
-// NewFormatService creates a new FormatService instance
-// If client is empty, defaults to "VLoggo"
-func NewFormatService(client string) *FormatService {
+func NewFormatService(client string, timezone ...string) *FormatService {
 	if client == "" {
 		client = "VLoggo"
 	}
-	return &FormatService{
-		Client: client,
+	tz := time.Local.String()
+	if len(timezone) > 0 && timezone[0] != "" {
+		tz = timezone[0]
 	}
+	location, err := time.LoadLocation(tz)
+	if err != nil {
+		location, tz = time.Local, time.Local.String()
+	}
+	return &FormatService{Client: client, Timezone: tz, Location: location}
 }
 
-// Date formats a timestamp in Brazilian format (DD/MM/YYYY HH:MM:SS)
-// If no time is provided, uses current time
+func (fs *FormatService) SetTimezone(timezone string) error {
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return err
+	}
+	fs.Timezone, fs.Location = timezone, location
+	return nil
+}
+
+func NewEventID() string {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		now := uint64(time.Now().UnixNano())
+		for index := range id {
+			id[index] = byte(now >> ((index % 8) * 8))
+		}
+	}
+	id[6] = (id[6] & 0x0f) | 0x40
+	id[8] = (id[8] & 0x3f) | 0x80
+	encoded := hex.EncodeToString(id[:])
+	return encoded[:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:]
+}
+
+func (fs *FormatService) ShortID(eventID string) string {
+	compact := strings.ReplaceAll(strings.ToLower(eventID), "-", "")
+	if len(compact) > 8 {
+		compact = compact[:8]
+	}
+	return "evt-" + compact
+}
+
 func (fs *FormatService) Date(t ...time.Time) string {
 	date := time.Now()
 	if len(t) > 0 {
 		date = t[0]
 	}
-	return date.Format("02/01/2006 15:04:05")
+	location := fs.Location
+	if location == nil {
+		location = time.Local
+	}
+	return date.In(location).Format("02/01/2006 15:04:05.000")
 }
 
-// IsoDate formats a timestamp in ISO 8601 / RFC3339 format (UTC)
-// If no time is provided, uses current time
 func (fs *FormatService) IsoDate(t ...time.Time) string {
 	date := time.Now()
 	if len(t) > 0 {
 		date = t[0]
 	}
-	return date.UTC().Format(time.RFC3339)
+	return date.UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
-// Filename generates the log filename based on current date
-// Format: log-YYYY-MM-DD.txt
-func (fs *FormatService) Filename() string {
-	now := time.Now()
-	dateStr := now.Format("2006-01-02")
-	return "log-" + dateStr + ".txt"
+func (fs *FormatService) Day(t ...time.Time) string {
+	date := time.Now()
+	if len(t) > 0 {
+		date = t[0]
+	}
+	location := fs.Location
+	if location == nil {
+		location = time.Local
+	}
+	return date.In(location).Format("2006-01-02")
 }
 
-// JSONFilename generates the JSON log filename based on current date
-// Format: log-YYYY-MM-DD.jsonl
-func (fs *FormatService) JSONFilename() string {
-	now := time.Now()
-	dateStr := now.Format("2006-01-02")
-	return fmt.Sprintf("log-%s.jsonl", dateStr)
+func (fs *FormatService) Filename(t ...time.Time) string {
+	return "log-" + fs.Day(t...) + ".txt"
 }
 
-// Line formats a log entry into a human-readable text line
-// Format: [Client] [Timestamp] [Level] [Code] [Caller] : Message
+func (fs *FormatService) JSONFilename(t ...time.Time) string {
+	return "log-" + fs.Day(t...) + ".jsonl"
+}
+
+func (fs *FormatService) SegmentFilename(extension string, date time.Time, sequence int) string {
+	suffix := ""
+	if sequence > 0 {
+		suffix = fmt.Sprintf(".%03d", sequence)
+	}
+	return fmt.Sprintf("log-%s%s.%s", fs.Day(date), suffix, strings.TrimPrefix(extension, "."))
+}
+
+// Line formats one event as a single terminal-safe line with short event ID.
 func (fs *FormatService) Line(entry types.LogEntry) string {
-	timestamp := fs.Date()
-	return fmt.Sprintf("[%s] [%s] [%s] [%s] [%s] : %s\n",
-		fs.Client,
-		timestamp,
-		entry.Level,
-		entry.Code,
-		entry.Caller,
-		entry.Message,
+	timestamp := time.Now()
+	if parsed, err := time.Parse(time.RFC3339Nano, entry.Timestamp); err == nil {
+		timestamp = parsed
+	}
+	client := entry.Client
+	if client == "" {
+		client = fs.Client
+	}
+	id := fs.ShortID(entry.EventID)
+	level := string(entry.Level)
+	if len(level) < 5 {
+		level += strings.Repeat(" ", 5-len(level))
+	}
+	parts := make([]string, 0, len(entry.Context)+len(entry.Data)+1)
+	parts = appendMetadata(parts, entry.Context)
+	parts = appendMetadata(parts, entry.Data)
+	if entry.Error != nil {
+		details := map[string]any{}
+		for _, key := range []string{"name", "message"} {
+			if value, ok := entry.Error[key]; ok {
+				details[key] = value
+			}
+		}
+		parts = append(parts, "error="+displayValue(details))
+	}
+	suffix := ""
+	if len(parts) > 0 {
+		suffix = " > " + strings.Join(parts, " > ")
+	}
+	message := strings.Join(strings.Fields(safeText(entry.Message)), " ")
+	return fmt.Sprintf("[%s] [%s] [%s] [%s] [%s] : %s%s\n",
+		headerSafe(client), fs.Date(timestamp), id, level, headerSafe(entry.Code),
+		message, suffix,
 	)
 }
 
-// JSONLine formats a log entry in JSON Lines (JSONL) format
-// Each entry is a complete JSON object followed by a newline
-// Returns an error message if serialization fails
 func (fs *FormatService) JSONLine(entry types.LogEntry) string {
-	jsonEntry := struct {
-		Client    string `json:"client"`
-		Timestamp string `json:"timestamp"`
-		types.LogEntry
-	}{
-		Client:    fs.Client,
-		Timestamp: fs.IsoDate(),
-		LogEntry:  entry,
-	}
-	jsonBytes, err := json.Marshal(jsonEntry)
+	line, err := json.Marshal(entry)
 	if err != nil {
-		return fmt.Sprintf("[VLoggo] > [%s] [%s] [ERROR] : failed to serialize log > %v",
-			fs.Client,
-			fs.Date(),
-			err,
-		)
+		fallback := map[string]string{"eventId": entry.EventID, "client": entry.Client, "level": string(entry.Level), "code": entry.Code, "message": "[JSON serialization failed]"}
+		line, _ = json.Marshal(fallback)
 	}
-	return string(jsonBytes) + "\n"
+	return string(line) + "\n"
 }
 
-// Separator generates a visual separator for log files with initialization message
-// Used when creating a new log file to mark the start
-func (fs *FormatService) Separator() string {
-	separator := "\n" + strings.Repeat("_", 50) + "\n\n"
-	timestamp := fs.Date()
-	return fmt.Sprintf("%s[%s] [%s] [INIT] : VLoggo initialized successfully \n",
-		separator,
-		fs.Client,
-		timestamp,
-	)
+func appendMetadata(parts []string, values types.LogData) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		parts = append(parts, safeText(key)+"="+displayValue(values[key]))
+	}
+	return parts
 }
 
-// JSONSeparator generates a JSON initialization entry for JSON log files
-// Used when creating a new JSON log file to mark the start
-// Returns an error message if serialization fails
-func (fs *FormatService) JSONSeparator() string {
-	initEntry := struct {
-		Client    string `json:"client"`
-		Timestamp string `json:"timestamp"`
-		Level     string `json:"level"`
-		Message   string `json:"message"`
-	}{
-		Client:    fs.Client,
-		Timestamp: fs.IsoDate(),
-		Level:     "INIT",
-		Message:   "VLoggo initialized successfully",
+func displayValue(value any) string {
+	if text, ok := value.(string); ok {
+		return strings.Join(strings.Fields(safeText(text)), " ")
 	}
-	jsonBytes, err := json.Marshal(initEntry)
+	data, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Sprintf("[VLoggo] > [%s] [%s] [ERROR] : failed to serialize init log > %v",
-			fs.Client,
-			fs.Date(),
-			err,
-		)
+		return safeText(fmt.Sprint(value))
 	}
-	return string(jsonBytes) + "\n"
+	return safeText(string(data))
 }
 
-// Caller gets caller information (filename and line number) from the call stack
-// Used to identify where a log entry originated in the code
-// skip defines how many stack frames to skip (typically 3 for log methods)
-// Returns "(unknown:0)" if information is unavailable
+func safeText(text string) string {
+	var result strings.Builder
+	for _, character := range text {
+		switch character {
+		case '\n':
+			result.WriteString(`\n`)
+		case '\r':
+			result.WriteString(`\r`)
+		case '\t':
+			result.WriteString(`\t`)
+		default:
+			if character < 0x20 || (character >= 0x7f && character <= 0x9f) || character == 0x2028 || character == 0x2029 {
+				if character <= 0xffff {
+					result.WriteString(`\u`)
+					result.WriteString(fmt.Sprintf("%04x", character))
+				} else {
+					result.WriteString(strconv.QuoteRune(character))
+				}
+			} else {
+				result.WriteRune(character)
+			}
+		}
+	}
+	return result.String()
+}
+
+func headerSafe(text string) string {
+	return strings.NewReplacer("[", `\[`, "]", `\]`).Replace(safeText(text))
+}
+
 func Caller(skip int) string {
-	_, file, line, ok := runtime.Caller(skip + 1)
-	if !ok {
-		return "(unknown:0)"
+	for frame := skip; frame < skip+32; frame++ {
+		pc, file, line, ok := runtime.Caller(frame)
+		if !ok {
+			break
+		}
+		function := runtime.FuncForPC(pc)
+		if function != nil {
+			name := function.Name()
+			if strings.HasPrefix(name, "runtime.") || strings.HasPrefix(name, "testing.") ||
+				strings.Contains(name, "github.com/vinialx/vloggo-go/v2/internal.Caller") ||
+				strings.Contains(name, "github.com/vinialx/vloggo-go/v2.(*VLoggo).") {
+				continue
+			}
+		}
+		return filepath.Base(file) + ":" + strconv.Itoa(line)
 	}
-	parts := strings.Split(file, "/")
-	filename := parts[len(parts)-1]
-	return fmt.Sprintf("%s:%s", filename, strconv.Itoa(line))
+	return "(unknown:0)"
 }

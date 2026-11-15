@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	config "github.com/vinialx/vloggo-go/config"
-	types "github.com/vinialx/vloggo-go/types"
+	config "github.com/vinialx/vloggo-go/v2/config"
+	types "github.com/vinialx/vloggo-go/v2/types"
 )
 
 func TestInfoWritesTxtAndJson(t *testing.T) {
@@ -38,7 +38,7 @@ func TestInfoWritesTxtAndJson(t *testing.T) {
 	}
 
 	txt := readOnlyLog(t, filepath.Join(root, "txt"), ".txt")
-	if !strings.Contains(txt, "[INFO] [BOOT]") || !strings.Contains(txt, "service started") {
+	if !strings.Contains(txt, "[INFO ] [BOOT]") || !strings.Contains(txt, "service started") {
 		t.Fatalf("txt log missing entry: %s", txt)
 	}
 
@@ -142,6 +142,7 @@ func TestRetentionDeletesOldDailyLogs(t *testing.T) {
 	NewInstance("retention",
 		config.WithConsole(false),
 		config.WithFilecount(types.Count{Txt: 2, Json: 2}),
+		config.WithRotation(types.VLoggoRotation{RetentionDays: 10000}),
 		config.WithDirectory(types.Paths{Txt: txtDir, Json: jsonDir}),
 	)
 
