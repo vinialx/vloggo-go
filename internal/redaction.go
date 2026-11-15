@@ -224,12 +224,7 @@ func (s *sanitizer) errorValue(err error, path []string, depth int) types.LogErr
 	if stack, ok := err.(interface{ StackTrace() string }); ok {
 		stackText := stack.StackTrace()
 		if s.matches(path, "message") {
-			firstLine := errorName(err) + ": " + redactedValue
-			if newline := strings.IndexByte(stackText, '\n'); newline >= 0 {
-				stackText = firstLine + stackText[newline:]
-			} else if stackText != "" {
-				stackText = firstLine
-			}
+			stackText = redactStackHeader(stackText, errorName(err), err.Error())
 		}
 		result["stack"] = stackText
 	}
@@ -263,6 +258,27 @@ func (s *sanitizer) errorValue(err error, path []string, depth int) types.LogErr
 		}
 	}
 	return result
+}
+
+// redactStackHeader removes the message from a stack, including every line of a multi-line message.
+func redactStackHeader(stack, name, message string) string {
+	if stack == "" {
+		return stack
+	}
+	header := name + ": " + redactedValue
+	for _, prefix := range []string{name + ": " + message, message} {
+		if message != "" && strings.HasPrefix(stack, prefix) {
+			return header + stack[len(prefix):]
+		}
+	}
+	// Unknown layout: keep only indented frame lines so no message text survives.
+	lines := []string{header}
+	for _, line := range strings.Split(stack, "\n") {
+		if strings.HasPrefix(line, "\t") || strings.HasPrefix(line, " ") {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func isNilError(err error) bool {
